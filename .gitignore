@@ -1,0 +1,13 @@
+.gradle/
+build/
+bin/
+run/
+out/
+
+# Fetched at runtime by tools/fetch-ogg-encoder.js; not part of the source.
+tools/.ogg-cache/
+
+# IDE
+.idea/
+*.iml
+.vscode/

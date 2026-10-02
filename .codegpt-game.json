@@ -1,0 +1,10 @@
+{
+  "name": "phone",
+  "engine": "fabric",
+  "build": { "cmd": ".\\.tools\\gradle-9.8.0\\bin\\gradle.bat build --no-daemon" },
+  "launch": { "cmd": ".\\.tools\\gradle-9.8.0\\bin\\gradle.bat", "args": ["runClient", "--no-daemon"] },
+  "log": { "stdout": true, "paths": ["run/logs/latest.log", "crash-reports/*.txt"] },
+  "ready": "\u005c\u005c[.*\u005c\u005c].*(Minecraft|Fabric|Started)",
+  "window": "Minecraft",
+  "sourceRoots": ["src/main/java", "src/client/java"]
+}

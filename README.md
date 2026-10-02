@@ -2,9 +2,11 @@
 
 In-game phone item with voice calls over any distance, built on Simple Voice Chat.
 
-The mod is complete end to end: take the phone, see who is online, call someone, they get
-an incoming-call screen, they accept, you both talk over voice regardless of distance, and
-either side hangs up from the phone GUI.
+The voice-call flow works end to end, and the phone now has accounts, numbers, contacts,
+SMS, call history and selectable ringtones. Take the phone, see who is online, call
+someone, and the other player gets an incoming-call screen with their number on it.
+Ringtones are registered mod sounds and the four built-in `.ogg` files ship with the mod —
+see `docs/ringtones.md` to replace them with your own melodies.
 
 ## How it works (start here)
 
@@ -21,8 +23,8 @@ Player presses CALL → CallRequestPacket(targetUuid)
         ↓
 CallManager.canCall(...) — all checks server-side
         ↓ creates Call(RINGING)
-Server sends IncomingCallPacket to the callee
-        ↓
+Server sends IncomingCallPacket to the callee and OutgoingCallPacket to the caller
+        ↓ caller can cancel on the outgoing screen
 Callee presses ACCEPT → AcceptCallPacket
         ↓
 CallManager.acceptCall(...) — re-validates
@@ -31,7 +33,7 @@ VoiceChatManager.connectPlayers(...) → CallState.CONNECTED
         ↓
 Server sends CallStartedPacket to both sides
         ↓
-Either side opens the phone and presses HANG UP → HangUpPacket
+Either side presses HANG UP on the call screen or in the phone → HangUpPacket
         ↓
 CallManager.endCall(...) → VoiceChatManager.disconnectPlayers(...)
         ↓ CallState.ENDED, Call removed from the map
@@ -65,9 +67,10 @@ the state. The acting player is always resolved from the network connection
 6. **`target` owns a phone** — someone without a phone cannot be reached.
 7. `caller` is not already in a call.
 8. `target` is not already in a call.
-9. `target` is callable (alive, not a spectator).
+9. `target` is callable (alive, not a spectator, not in Do not disturb mode).
 
-If any check fails, no call is created and the client is not told why.
+If any check fails, no call is created. A stale attempt to call a player without a phone
+returns `no_phone`; other invalid requests are silently rejected.
 
 ## Owning a phone
 
@@ -86,7 +89,7 @@ Where the rule is enforced:
 | Situation | Without a phone |
 |---|---|
 | Opening the phone GUI | impossible — you need the item in hand to use it |
-| The list in the GUI | players without a phone are **hidden** from the list |
+| The list in the GUI | players without a phone are visible as **No phone**, with no call button |
 | Someone calls you | the call is refused; the caller sees "That player has no phone" |
 | You accept a call | if you dropped the phone while it rang, the call ends with reason `no_phone` |
 | A call is connected | already established; the rule is not re-checked mid-call, and losing the item mid-call does not cut the call |
@@ -95,8 +98,9 @@ The last row is a deliberate choice: the phone is needed to *start* a call, not 
 one alive. If you would rather have the call drop when the item is dropped, that is a
 small addition to `endCall`/a tick check — say so and I will add it.
 
-The player list is filtered by this server-side too, so a phone-less player is simply not
-callable and cannot be spammed with calls.
+Phone-less players are displayed as unavailable. The server still checks ownership when a
+call is placed, including requests from a stale list or a modified client. "Do not disturb"
+is stored in the player's account, so it survives a relog, and is checked on the server.
 
 ### Call states
 
@@ -277,23 +281,81 @@ One caveat: the public `Group` interface has no usable "is anybody still in this
 check (`getPlayers()` returns `Player` handles, not UUIDs), so membership is tracked inside
 `VoiceChatManager` to know when a group can be deleted.
 
+## Where phone data is stored
+
+Everything persistent lives in **one file inside the world save**, not in the player
+data folder and not on the client:
+
+```
+<world>/dimensions/minecraft/overworld/data/phone/phone_data.dat
+```
+
+For the dev client that is `run/saves/New World/dimensions/minecraft/overworld/data/phone/phone_data.dat`.
+
+It is gzip-compressed NBT. To inspect it:
+
+```bash
+node tools/dump-phone-data.js "run/saves/New World/dimensions/minecraft/overworld/data/phone/phone_data.dat"
+```
+
+Shape:
+
+```text
+"data": {
+  "numbers": 1000002                     <- next number to hand out
+  "accounts": [                          <- one entry per player who ever used a phone
+    { "id": "<profile uuid>", "number": "1000001",
+      "dnd": false, "ringtone": "phone:ringtone_classic", "silent": false,
+      "contacts": [...], "messages": [...], "history": [...], "blocked": "" }
+  ]
+}
+"DataVersion": 4903
+```
+
+| Field | Holds |
+|---|---|
+| `id` | the Minecraft profile UUID — the only real identity |
+| `number` | the phone number, generated once and never changed |
+| `dnd` / `silent` / `ringtone` | the settings from the Settings tab |
+| `contacts` | saved contacts, addressed by number |
+| `messages` | every SMS, kept for both sides |
+| `history` | finished calls with direction and result |
+| `blocked` | blocked numbers, comma-separated |
+
+Consequences worth knowing:
+
+* Deleting the world deletes every number, conversation and call record.
+* Copying the save to another server copies all of it.
+* Only the **overworld** is used, so the Nether and the End see the same phone data.
+* Limits are enforced in `PhoneLimits`: 200 messages, 100 contacts, 100 history entries
+  per player, 256 characters per SMS. Older entries are dropped, so the file cannot grow
+  without bound.
+* Transient state is *not* here: active calls, voice groups and the do-not-disturb
+  rate limiter live in memory in `CallManager` and `PhoneRateLimiter`.
+
+## Where the ringtones live
+
+`src/main/resources/assets/phone/sounds/*.ogg` — four synthesised Ogg Vorbis files
+declared in `assets/phone/sounds.json`.
+
 ## Sounds
 
-All three sounds are vanilla Minecraft sounds, chosen so that nothing has to be registered
-and no `sounds.json` is needed. They live in one file, `phone/PhoneSounds`:
+The three call-state cues are vanilla Minecraft sounds, chosen so nothing has to be
+registered:
 
 | Event | Sound | Who hears it |
 |---|---|---|
 | Incoming call (RINGING) | `SoundEvents.BELL_BLOCK` | only the player being called |
-| Call accepted (CONNECTED) | `SoundEvents.EXPERIENCE_ORB_PICKUP` | both players |
-| Call ended (any reason) | `SoundEvents.BREWING_STAND_BREW` | both players |
+| `Call accepted (CONNECTED)` | `SoundEvents.EXPERIENCE_ORB_PICKUP` | both players |
+| Call ended (any reason) | `SoundEvents.ANVIL_LAND` | both players |
+| SMS received | `SoundEvents.AMETHYST_BLOCK_RESONATE` | the recipient |
+
+Ringing itself uses the player's chosen ringtone from the four `.ogg` files, played through
+`PlayPhoneSoundPacket` so the client can resolve the id locally.
 
 They are played with `ServerPlayer.playSound(SoundEvent, float, float)`, which is a
 **per-player** call — so a ringing phone is heard by the callee wherever they are standing,
 not only nearby. That is the whole point of a phone.
-
-To use custom sounds later, register a `SoundEvent`, add a `sounds.json`, and change only
-`PhoneSounds`.
 
 ### 26.2 sound API gotcha
 
@@ -314,13 +376,21 @@ build.gradle
 gradle.properties
 settings.gradle
 libs/voicechat-api.jar              Simple Voice Chat 2.6.24+26.2 (compileOnly)
+tools/                              asset generation + a SavedData inspector
 src/main/java/com/example/phone/
     PhoneMod.java                    common entrypoint + disconnect hook
     PhoneIds.java                    Identifier constants
     item/PhoneItems.java             item registry
     item/PhoneItem.java              item behaviour only
     item/PhoneOwnership.java         "does this player own a phone" check
-    phone/PhoneSounds.java           all sound effects
+    phone/PhoneSounds.java           all sound effects + ringtone registration
+    data/PhoneData.java              the world's SavedData (accounts, numbers, SMS, history)
+    data/PhoneDataStorage.java       resolves PhoneData from the overworld
+    data/PhoneAccount.java           one player: number, settings, contacts, messages, history
+    data/PhoneService.java           the server-side rules for contacts, SMS, history, ringtones
+    data/PhoneLimits.java            server-enforced limits
+    data/PhoneRateLimiter.java       in-memory throttles (never saved)
+    data/Ringtones.java              the ringtone allow-list
     call/CallState.java              RINGING / CONNECTED / ENDED
     call/Call.java                   caller, target, state, voice group id
     call/CallManager.java            the only place where call state is decided
@@ -337,15 +407,26 @@ src/main/java/com/example/phone/
     network/CallEndedPacket.java     S2C  call is over (both parties always)
 src/client/java/com/example/phone/screen/
     PhoneModClient.java              client entrypoint, GUI opening, receivers, call state
-    PhoneScreen.java                 phone GUI (dial list, or compact in-call panel)
-    IncomingCallScreen.java          ACCEPT / REJECT
-    InCallScreen.java                in-call screen (closed by default; call shows in the phone)
-    ContactRowWidget.java            legacy row widget, no longer used by PhoneScreen
+    PhoneClientState.java            client-side mirror of the account + revision counter
+    PhonePanelScreen.java            shared panel, colours, ScrollingRows, auto-refresh
+    PhoneHomeScreen.java             home: number + tabs
+    DialScreen.java                  online player list with CALL buttons
+    ContactsScreen.java              saved contacts
+    AddContactScreen.java            contact picker (server-known numbers only)
+    MessagesScreen.java              conversation list
+    ConversationScreen.java          one thread: wrapped messages + text box
+    HistoryScreen.java               finished calls
+    SettingsScreen.java              ringtone, do not disturb, sounds
+    OutgoingCallScreen.java          caller's view while the other phone rings
+    IncomingCallScreen.java          callee's ACCEPT / REJECT
+    InCallScreen.java                active call, live duration, hang up
 src/main/resources/
     fabric.mod.json
     assets/phone/items/phone.json           <- 26.2 item -> model link (do NOT forget)
     assets/phone/models/item/phone.json      <- model, parent minecraft:item/generated
     assets/phone/textures/item/phone.png    <- 16x16 sprite
+    assets/phone/sounds.json                 <- ringtone -> sound file mapping
+    assets/phone/sounds/*.ogg                <- four built-in ringtones
     assets/phone/lang/en_us.json
     assets/phone/lang/ru_ru.json
 ```
@@ -356,35 +437,34 @@ and the common/server code in `src/main` — this is what keeps `PhoneItem` and
 
 ## How the phone GUI works
 
-The phone has two layouts, chosen by call state:
-
-**Idle** — dial list:
-
-```text
-ТЕЛЕФОН
-──────────────
-Кому хотите позвонить?
-
-Alex        [ЗВОНОК]
-Steve       [ЗВОНОК]
-
-Других игроков нет
-
-[ЗАКРЫТЬ]
-```
-
-**In call** — compact panel, the player list and the prompt are hidden:
+The phone is a tabbed app. The home screen shows only the number and the tabs, so no call
+button can appear while another tab is open:
 
 ```text
 ТЕЛЕФОН
 ──────────────
-Идёт разговор
+Ваш номер: 100-0001
+Непрочитанных сообщений: 2
 
-Собеседник: Alex   2:35
+[Звонки]  [Контакты]
+[Сообщения]  [История]
+   [Настройки]
 
-[СБРОСИТЬ]
-[ЗАКРЫТЬ]
+[НАЗАД]
 ```
+
+**Звонки** — the online player list, one row per player with a CALL button. Players without
+a phone are listed as unavailable and get no button.
+
+**Контакты** — saved contacts with delete and SMS buttons, plus a picker that only offers
+numbers the server already knows.
+
+**Сообщения** — one row per conversation with an unread badge and the last message as a
+preview, then a per-conversation view with a text box.
+
+**История** — finished calls, newest first.
+
+**Настройки** — ringtone, do-not-disturb and sound toggles.
 
 Notes on the implementation:
 
@@ -392,11 +472,22 @@ Notes on the implementation:
   pipeline. An earlier version drew text manually in `extractRenderState(...)` and rows via a
   custom `AbstractWidget`; on 26.2 the text simply did not appear, which is why the GUI looked
   like it had only buttons.
-* Accepting a call does **not** open an overlay. The player stays in the game and opens the
-  phone to see who they are talking to, for how long, and to hang up.
-* The elapsed time is counted on the client from the moment `CallStartedPacket` arrives, and
-  is displayed as `M:SS`.
-* The player list is not refreshed while a call is active (no point, and it saves traffic).
+* `PhonePanelScreen` holds the shared panel drawing, the tab colours and `ScrollingRows`,
+  a mouse-wheel viewport used by every list.
+* **Every screen redraws itself when data arrives.** `PhoneClientState` keeps a revision
+  counter that is bumped by each server payload; `PhonePanelScreen.tick()` compares it and
+  calls `rebuildWidgets()`. Without this a screen showed whatever happened to arrive before
+  it opened, so messages, history and settings looked stale until the screen was reopened.
+* Direction is shown by **colour and alignment, not by `>` / `<` markers**: incoming text is
+  amber and left-aligned, outgoing is teal and right-aligned. A `StringWidget` renders its
+  message once at `init()`, so the call duration needs a dedicated widget rewritten in
+  `tick()`.
+* Long SMS are wrapped over several lines on word boundaries; a very long single word is cut
+  at the line width. The tail of a conversation is shown so the newest message is visible.
+* A draft in the text box survives a rebuild, and focus is only set on first build — moving
+  focus away mid-typing would drop characters.
+* Lists are scrollable and rebuild widgets for the visible window only, so the cost is flat
+  regardless of list length. See "Scrollable lists" below.
 
 ## Localisation
 
@@ -408,21 +499,37 @@ The phone item's own name uses `item.phone.phone`.
 
 ## How the player list works
 
-1. Client opens `PhoneScreen` (from `UseItemCallback` when the held item is `PhoneItem`).
-2. `PhoneScreen` sends `PlayerListRequestPacket` once on open, and then every 60 ticks while
-   idle.
-3. The server runs `collectCallablePlayers(viewer)`, which walks
+1. Client opens `PhoneHomeScreen` (from `UseItemCallback` when the held item is `PhoneItem`).
+2. The Dial tab sends `PlayerListRequestPacket` once on open.
+3. The server runs `getCallablePlayers(viewer)`, which walks
    `viewer.level().getServer().getPlayerList().getPlayers()` and skips:
    * the viewer themselves,
-   * players already in a call (busy — hidden, as chosen for the MVP),
+   * players already in a call (busy),
    * players who are dead or spectating,
-   * players who do not have a phone.
+   * players who turned on do-not-disturb.
 
-   Offline players are never in that list, so they can never appear.
-4. The server replies with `PlayerListPacket` containing `List<Contact(uuid, name)>`.
+   Players without a phone are **not** skipped here — they are listed so the GUI can show
+   them as unavailable. `canCall` still refuses the actual call.
+4. The server replies with `PlayerListPacket` containing `List<Contact(uuid, name, hasPhone)>`.
 5. The client renders exactly what it received — it performs no availability checks of its
-   own, and it does not re-request inside `init()` (that would loop, because
-   `rebuildWidgets()` calls `init()`).
+   own.
+
+Offline players are never in that list, so they can never appear.
+
+## Scrollable lists
+
+A hard-coded row count silently hid everyone past it: on a server with 40 players the dial
+list showed the first 8 and the other 32 simply did not exist as far as the GUI was
+concerned. `PhonePanelScreen.ScrollingRows` fixes this:
+
+* the mouse wheel scrolls one row per tick, over the panel area only;
+* the scrollbar is drawn only when there is something to scroll, and its thumb size is
+  proportional to the list length;
+* the scroll offset lives in the screen instance, so an auto-refresh (someone joining or
+  leaving) does not snap the list back to the top;
+* widgets are created for the visible window only, so rendering cost stays flat.
+
+Used by the dial, contacts, messages, history and contact-picker lists.
 
 ## Build
 
@@ -480,14 +587,10 @@ connected yet (check the voice chat screen / microphone first).
 
 ## Current state / not implemented
 
-Deliberately out of scope for the MVP — do not assume they exist:
+Deliberately out of scope — do not assume they exist:
 
-* SMS / text messages, contacts, call history, phone numbers, accounts;
-* ringtone / sound effects beyond the three vanilla ones;
-* a reject/hang-up button outside the phone GUI (hanging up requires opening the phone);
-* any GUI on the caller's side while ringing (the caller sees nothing until the callee
-  accepts, then must open the phone to see the call);
-* a "player has no phone" message in the caller's list — such players are simply hidden,
-  and the message only appears if a call was attempted anyway;
-* per-player "do not disturb" setting — `isCallable` currently just means alive, not a
-  spectator, and owning a phone.
+* multiple phone lines, or "accounts" as a concept separate from the player's profile;
+* per-country phone number formats (numbers are generated sequentially as 100-0001);
+* transferring a number to another player, or changing it once issued;
+* group calls, video, or contacts sync between servers;
+* reading SMS while the phone GUI is closed other than through the notice line.
