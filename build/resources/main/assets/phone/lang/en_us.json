@@ -1,0 +1,19 @@
+﻿{
+  "item.phone.phone": "Phone",
+  "phone.gui.title": "PHONE",
+  "phone.gui.call_prompt": "Who do you want to call?",
+  "phone.gui.connected": "Call in progress",
+  "phone.gui.in_call": "%1$s   %2$s:%3$s",
+  "phone.gui.no_players": "No players online",
+  "phone.gui.more": "and %s more...",
+  "phone.gui.call": "CALL",
+  "phone.gui.close": "CLOSE",
+  "phone.gui.hang_up": "HANG UP",
+  "phone.gui.incoming_title": "INCOMING CALL",
+  "phone.gui.incoming_from": "%s is calling you",
+  "phone.gui.accept": "ACCEPT",
+  "phone.gui.reject": "REJECT",
+  "phone.gui.in_call_with": "IN CALL WITH %s",
+  "phone.gui.notice_no_phone": "That player has no phone",
+  "phone.gui.notice_rejected": "The call was rejected"
+}

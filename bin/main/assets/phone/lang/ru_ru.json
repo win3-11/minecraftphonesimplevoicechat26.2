@@ -1,0 +1,19 @@
+﻿{
+  "item.phone.phone": "Телефон",
+  "phone.gui.title": "ТЕЛЕФОН",
+  "phone.gui.call_prompt": "Кому хотите позвонить?",
+  "phone.gui.connected": "Идёт разговор",
+  "phone.gui.in_call": "%1$s   %2$s:%3$s",
+  "phone.gui.no_players": "Других игроков нет",
+  "phone.gui.more": "и ещё %s...",
+  "phone.gui.call": "ЗВОНОК",
+  "phone.gui.close": "ЗАКРЫТЬ",
+  "phone.gui.hang_up": "СБРОСИТЬ",
+  "phone.gui.incoming_title": "ВХОДЯЩИЙ ЗВОНОК",
+  "phone.gui.incoming_from": "Вам звонит: %s",
+  "phone.gui.accept": "ОТВЕТИТЬ",
+  "phone.gui.reject": "ОТКЛОНИТЬ",
+  "phone.gui.in_call_with": "РАЗГОВОР С %s",
+  "phone.gui.notice_no_phone": "У этого игрока нет телефона",
+  "phone.gui.notice_rejected": "Звонок отклонён"
+}
